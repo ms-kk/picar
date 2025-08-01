@@ -1,24 +1,25 @@
 #!/usr/bin/env/python
-# File name   : server.py
-# Production  : PiCar-C
+# File name   : appserver.py
+# Production  : PiCar-B
 # Website     : www.adeept.com
 # Author      : William
-# Date        : 2019/11/21
+# Date        : 2019/10/28
 
 import socket
 import threading
 import time
 import os
-import LED
-import move
-import servo
-import switch
-import RPIservo
-servo.servo_init()
-switch.switchSetup()
-switch.set_all_switch_off()
-Led  = LED.LED()
-Led.colorWipe(80,255,0)
+import LEDapp as LED
+import led
+import motor
+import turn
+
+
+motor.setup()            
+turn.ahead()
+LED  = LED.LED()
+LED.colorWipe(80,255,0)
+led.setup()
 
 step_set = 1
 speed_set = 100
@@ -31,48 +32,91 @@ pos_input = 1
 catch_input = 1
 cir_input = 6
 
-servo_speed  = 5
+servo_speed  = 11
 
-ledthread = LED.LED_ctrl()
-ledthread.start()
 
-scGear = RPIservo.ServoCtrl()
-scGear.moveInit()
-P_sc = RPIservo.ServoCtrl()
-P_sc.start()
-T_sc = RPIservo.ServoCtrl()
-T_sc.start()
+def num_import_int(initial):        #Call this function to import data from '.txt' file
+    with open("//etc/set.txt") as f:
+        for line in f.readlines():
+            if(line.find(initial) == 0):
+                r=line
+    begin=len(list(initial))
+    snum=r[begin:]
+    n=int(snum)
+    return n
+
+
+vtr_mid    = num_import_int('E_C1:')
+hoz_mid    = num_import_int('E_C2:')
+look_up_max    = num_import_int('look_up_max:')
+look_down_max  = num_import_int('look_down_max:')
+look_right_max = num_import_int('look_right_max:')
+look_left_max  = num_import_int('look_left_max:')
+turn_speed     = num_import_int('look_turn_speed:')
+
+vtr_mid_orig = vtr_mid
+hoz_mid_orig = hoz_mid
+
+left_R = 22
+left_G = 23
+left_B = 24
+
+right_R = 10
+right_G = 9
+right_B = 25
+
+spd_ad     = 1          #Speed Adjustment
+pwm0       = 0          #Camera direction 
+pwm1       = 1          #Ultrasonic direction
+status     = 1          #Motor rotation
+forward    = 1          #Motor forward
+backward   = 0          #Motor backward
+
+left_spd   = 100         #Speed of the car
+right_spd  = 100         #Speed of the car
+left       = 100         #Motor Left
+right      = 100         #Motor Right
+
 
 class Servo_ctrl(threading.Thread):
     def __init__(self, *args, **kwargs):
         super(Servo_ctrl, self).__init__(*args, **kwargs)
-        self.__flag = threading.Event()
-        self.__flag.set()
-        self.__running = threading.Event()
-        self.__running.set()
+        self.__flag = threading.Event()     # 用于暂停线程的标识
+        self.__flag.set()       # 设置为True
+        self.__running = threading.Event()      # 用于停止线程的标识
+        self.__running.set()      # 将running设置为True
 
     def run(self):
+        global hoz_mid, vtr_mid
         while self.__running.isSet():
-            self.__flag.wait()
+            self.__flag.wait()      # 为True时立即返回, 为False时阻塞直到内部的标识位为True后返回
             if servo_command == 'lookleft':
-                servo.lookleft(servo_speed)
+                if hoz_mid< look_left_max:
+                    hoz_mid+=turn_speed
+                turn.ultra_turn(hoz_mid)
             elif servo_command == 'lookright':
-                servo.lookright(servo_speed)
+                if hoz_mid> look_right_max:
+                    hoz_mid-=turn_speed
+                turn.ultra_turn(hoz_mid)
             elif servo_command == 'up':
-                servo.up(servo_speed)
+                if vtr_mid< look_up_max:
+                    vtr_mid+=turn_speed
+                turn.camera_turn(vtr_mid)
             elif servo_command == 'down':
-                servo.down(servo_speed)
-            time.sleep(0.03)
+                if vtr_mid> look_down_max:
+                    vtr_mid-=turn_speed
+                turn.camera_turn(vtr_mid)
+            time.sleep(0.07)
 
     def pause(self):
-        self.__flag.clear()
+        self.__flag.clear()     # 设置为False, 让线程阻塞
 
     def resume(self):
-        self.__flag.set()
+        self.__flag.set()    # 设置为True, 让线程停止阻塞
 
     def stop(self):
-        self.__flag.set()
-        self.__running.clear()
+        self.__flag.set()       # 将线程从暂停状态恢复, 如何已经暂停的话
+        self.__running.clear()        # 设置为False  
 
 
 def app_ctrl():
@@ -87,108 +131,83 @@ def app_ctrl():
     servo_move.pause()
 
     def  ap_thread():
-        os.system("sudo create_ap wlan0 eth0 Groovy 12345678")
+        os.system("sudo create_ap wlan0 eth0 Adeept 12345678")
 
     def setup():
-        move.setup()
+        motor.setup()
 
     def appCommand(data_input):
         global direction_command, turn_command, servo_command
         if data_input == 'forwardStart\n':
-            direction_command = 'forward'
-            move.motor_left(1, 0, speed_set)
-            move.motor_right(1, 0, speed_set)
-		    # RL.both_on()
+            motor.motor_left(status, forward,left_spd*spd_ad)
+            motor.motor_right(status,backward,right_spd*spd_ad)
+            LED.colorWipe(0,80,255)
 
         elif data_input == 'backwardStart\n':
-            direction_command = 'backward'
-            move.motor_left(1, 1, speed_set)
-            move.motor_right(1, 1, speed_set)
-            # RL.red()
+            motor.motor_left(status, backward, left_spd*spd_ad)
+            motor.motor_right(status, forward, right_spd*spd_ad)
+            LED.colorWipe(255,80,0)
 
         elif data_input == 'leftStart\n':
-            turn_command = 'left'
-            scGear.moveAngle(2,30)
-            move.motor_left(1, 0, speed_set)
-            move.motor_right(1, 0, speed_set)
-            
+            turn.left()
+
         elif data_input == 'rightStart\n':
-            turn_command = 'right'
-            scGear.moveAngle(2,-30)
-            move.motor_left(1, 0, speed_set)
-            move.motor_right(1, 0, speed_set)
-            # RL.both_off()
-            # RL.turnRight()
+            turn.right()
 
         elif 'forwardStop' in data_input:
-            if turn_command == 'no':
-                move.motorStop()
+            motor.motorStop()
 
         elif 'backwardStop' in data_input:
-            if turn_command == 'no':
-                move.motorStop()
+            motor.motorStop()
 
         elif 'leftStop' in data_input:
-            turn_command = 'no'
-            # servo.turnMiddle()
-            # move.motorStop()
-            scGear.moveAngle(2, 0)
-            move.motorStop()
+            turn.middle()
 
         elif 'rightStop' in data_input:
-            turn_command = 'no'
-            # servo.turnMiddle()
-            # move.motorStop()
-            scGear.moveAngle(2, 0)
-            move.motorStop()
+            turn.middle()
+
 
         if data_input == 'lookLeftStart\n':
-            P_sc.singleServo(1, 1, 7)
+            servo_command = 'lookleft'
+            servo_move.resume()
 
         elif data_input == 'lookRightStart\n': 
-            P_sc.singleServo(1,-1, 7)
+            servo_command = 'lookright'
+            servo_move.resume()
 
         elif data_input == 'downStart\n':
-            T_sc.singleServo(0,-1, 7)
+            servo_command = 'down'
+            servo_move.resume()
 
         elif data_input == 'upStart\n':
-            T_sc.singleServo(0, 1, 7)
+            servo_command = 'up'
+            servo_move.resume()
 
         elif 'lookLeftStop' in data_input:
-            P_sc.stopWiggle()
+            servo_move.pause()
+            servo_command = 'no'
         elif 'lookRightStop' in data_input:
-            P_sc.stopWiggle()
+            servo_move.pause()
+            servo_command = 'no'
         elif 'downStop' in data_input:
-            T_sc.stopWiggle()
+            servo_move.pause()
+            servo_command = 'no'
         elif 'upStop' in data_input:
-            T_sc.stopWiggle()
+            servo_move.pause()
+            servo_command = 'no'
 
 
         if data_input == 'aStart\n':
-            if LED.ledfunc != 'police':
-                LED.ledfunc = 'police'
-                ledthread.resume()
-            elif LED.ledfunc == 'police':
-                LED.ledfunc = ''
-                ledthread.pause()
+            led.both_on()
 
         elif data_input == 'bStart\n':
-            if LED.ledfunc != 'rainbow':
-                LED.ledfunc = 'rainbow'
-                ledthread.resume()
-            elif LED.ledfunc == 'rainbow':
-                LED.ledfunc = ''
-                ledthread.pause()
+            led.both_off()
 
         elif data_input == 'cStart\n':
-            switch.switch(1,1)
-            switch.switch(2,1)
-            switch.switch(3,1)
+            pass
 
         elif data_input == 'dStart\n':
-            switch.switch(1,0)
-            switch.switch(2,0)
-            switch.switch(3,0)
+            pass
 
         elif 'aStop' in data_input:
             pass
@@ -218,21 +237,21 @@ def app_ctrl():
             AppCliSock, AppAddr = AppSerSock.accept()
             print('...App connected from :', AppAddr)
         except:
-            ap_threading=threading.Thread(target=ap_thread)       #Define a thread for AP Mode
+            ap_threading=threading.Thread(target=ap_thread)   #Define a thread for data receiving
             ap_threading.setDaemon(True)                          #'True' means it is a front thread,it would close when the mainloop() closes
             ap_threading.start()                                  #Thread starts
 
-            led.colorWipe(0,16,50)
+            LED.colorWipe(0,16,50)
             time.sleep(1)
-            led.colorWipe(0,16,100)
+            LED.colorWipe(0,16,100)
             time.sleep(1)
-            led.colorWipe(0,16,150)
+            LED.colorWipe(0,16,150)
             time.sleep(1)
-            led.colorWipe(0,16,200)
+            LED.colorWipe(0,16,200)
             time.sleep(1)
-            led.colorWipe(0,16,255)
+            LED.colorWipe(0,16,255)
             time.sleep(1)
-            led.colorWipe(35,255,35)
+            LED.colorWipe(35,255,35)
 
             AppSerSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             AppSerSock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
@@ -244,7 +263,7 @@ def app_ctrl():
 
     appconnect()
     setup()
-    app_threading=threading.Thread(target=appconnect)         #Define a thread for app connection
+    app_threading=threading.Thread(target=appconnect)         #Define a thread for FPV and OpenCV
     app_threading.setDaemon(True)                             #'True' means it is a front thread,it would close when the mainloop() closes
     app_threading.start()                                     #Thread starts
 
@@ -256,5 +275,19 @@ def app_ctrl():
         appCommand(data)
         pass
 
+AppConntect_threading=threading.Thread(target=app_ctrl)         #Define a thread for FPV and OpenCV
+AppConntect_threading.setDaemon(True)                             #'True' means it is a front thread,it would close when the mainloop() closes
+AppConntect_threading.start()                                     #Thread starts
+
 if __name__ == '__main__':
-    app_ctrl()
+    i = 1
+    try:
+        while 1:
+            i += 1
+            print(i)
+            time.sleep(30)
+            pass
+    except:
+        servo_move.stop()
+        motor.motorStop()
+        LED.colorWipe(0,0,0)

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-# File name   : motor.py
+# File name   : autorun.py
 # Description : Control Motors 
 # Website     : www.adeept.com
 # E-mail      : support@adeept.com
@@ -30,45 +30,18 @@ def replace_num(file,initial,new_num):
         f.writelines(newline)
 
 path_get = str(search('//home/pi/','server.py'))
-path_get=path_get[:-15]
+path_get=path_get[:-2]
 
-if path_get != -1:
-	while 1:
-		command_select = input('Do you want to autostart the sound version or the Test version(without OpenCV)?\nInput "1" to select sound version.\nInput "2" to select Test version(without OpenCV).')
-		if command_select == '1' or command_select == '2':
-			break
-		else:
-			continue
-else:
-	print('Cannot find the programe for this robot, you need to setup the programe first.')
+try:
+	os.system('sudo rm //home/pi/startup.sh')
+except:
+	pass
 
+try:
+	os.system('sudo touch //home/pi/startup.sh')
+	with open("//home/pi/startup.sh",'w') as file_to_write:
+		file_to_write.write("#!/bin/sh\nsudo python3 %sserver.py"%path_get)
+except:
+	pass
 
-if command_select == '1':
-	try:
-		try:
-			os.system('sudo rm -rf //home/pi/.config/autostart')
-		except:
-			pass
-		os.system('sudo mkdir //home/pi/.config/autostart')
-		os.system('sudo touch //home/pi/.config/autostart/car.desktop')
-		with open("//home/pi/.config/autostart/car.desktop",'w') as file_to_write:
-			file_to_write.write("[Desktop Entry]\n   Name=Car\n   Comment=Car\n   Exec=sudo python3 %sserver.py\n   Icon=false\n   Terminal=false\n   MutipleArgs=false\n   Type=Application\n   Catagories=Application;Development;\n   StartupNotify=true"%path_get)
-		print('The sound version will start when boot')
-	except:
-		pass
-elif command_select == '2':
-	try:
-		try:
-			os.system('sudo rm -rf //home/pi/.config/autostart')
-		except:
-			pass
-		os.system('sudo mkdir //home/pi/.config/autostart')
-		os.system('sudo touch //home/pi/.config/autostart/car.desktop')
-		with open("//home/pi/.config/autostart/car.desktop",'w') as file_to_write:
-			file_to_write.write("[Desktop Entry]\n   Name=Car\n   Comment=Car\n   Exec=sudo python3 %sserverTest.py\n   Icon=false\n   Terminal=false\n   MutipleArgs=false\n   Type=Application\n   Catagories=Application;Development;\n   StartupNotify=true"%path_get)
-		print('The Test version(without OpenCV) will start when boot')
-	except:
-		pass
-
-#path_get=str(path_get)
-#print(path_get[:-15])
+os.system('sudo chmod 777 //home/pi/startup.sh')

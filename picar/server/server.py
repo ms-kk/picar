@@ -1,727 +1,737 @@
-#!/usr/bin/env/python
+#!/usr/bin/python3
 # File name   : server.py
-# Production  : PiCar-C
-# Website	 : www.adeept.com
-# Author	  : William
-# Date		: 2019/11/21
-import servo
-servo.servo_init()
+# Description : The main program server takes control of Ultrasonic,Motor,Servo by receiving the order from the client through TCP and carrying out the corresponding operation.
+# Website     : www.adeept.com
+# E-mail      : support@adeept.com
+# Author      : William & Tony DiCola (tony@tonydicola.com, the WS_2812 code)
+# Date        : 2018/10/12
+
+import RPi.GPIO as GPIO
+import motor
+import ultra
 import socket
 import time
 import threading
-import GUImove as move
 import Adafruit_PCA9685
+import picamera
+from picamera.array import PiRGBArray
+import turn
+import led
+import findline
+import speech
+import cv2
+from collections import deque
+import numpy as np
+import argparse
+import imutils
+from rpi_ws281x import *
+import argparse
+import zmq
+import base64
 import os
-import FPV
-import info
-
-import LED
-import GUIfindline as findline
-import switch
-import ultra
-import PID
-
-import random
-
-SR_dect = 0
-appConnection = 1
-Blockly = 0
-
-if SR_dect:
-	try:
-		import SR
-		SR_dect = 1
-	except:
-		SR_dect = 0
-		pass
-SR_mode = 0
-
-
-if appConnection:
-	try:
-		import appserver
-		AppConntect_threading=threading.Thread(target=appserver.app_ctrl)		 #Define a thread for app ctrl
-		AppConntect_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-		AppConntect_threading.start()									 #Thread starts
-	except:
-		pass
-
-
-MPU_connection = 1
-
-servo_speed  = 5
-functionMode = 0
-dis_keep = 0.35
-goal_pos = 0
-tor_pos  = 1
-mpu_speed = 1
-init_get = 0
-
-range_min = 0.55
-
-R_set = 0
-G_set = 0
-B_set = 0
-
-
-def start_blockly():
-	os.system("cd //home/pi/Blockly_picar-c && sudo python3 server.py")
-
-
-if Blockly:
-	try:
-		blockly_threading=threading.Thread(target=start_blockly)     #Define a thread for Blockly
-		blockly_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-		blockly_threading.start()									 #Thread starts
-	except:
-		pass
-
-
-def autoDect(speed):
-	move.motorStop()
-	servo.ahead()
-	time.sleep(0.3)
-	getMiddle = ultra.checkdist()
-	print('M%f'%getMiddle)
-
-	servo.ahead()
-	servo.lookleft(100)
-	time.sleep(0.3)
-	getLeft = ultra.checkdist()
-	print('L%f'%getLeft)
-
-	servo.ahead()
-	servo.lookright(100)
-	time.sleep(0.3)
-	getRight = ultra.checkdist()
-	print('R%f'%getRight)
-
-	if getMiddle < range_min and min(getLeft, getRight) > range_min:
-		if random.randint(0,1):
-			servo.turnLeft()
-		else:
-			servo.turnRight()
-		move.move(speed,'forward')
-		time.sleep(0.5)
-		move.motorStop()
-	elif getLeft < range_min and min(getMiddle, getRight) > range_min:
-		servo.turnRight(0.7)
-		move.move(speed,'forward')
-		time.sleep(0.5)
-		move.motorStop()
-	elif getRight < range_min and min(getMiddle, getLeft) > range_min:
-		servo.turnLeft(0.7)
-		move.move(speed,'forward')
-		time.sleep(0.5)
-		move.motorStop()
-	elif max(getLeft, getMiddle) < range_min and getRight > range_min:
-		servo.turnRight()
-		move.move(speed,'forward')
-		time.sleep(0.5)
-		move.motorStop()
-	elif max(getMiddle, getRight) < range_min and getLeft >range_min:
-		servo.turnLeft()
-		move.move(speed, 'forward')
-		time.sleep(0.5)
-		move.motorStop()
-	elif max(getLeft, getMiddle, getRight) < range_min:
-		move.move(speed,'backward')
-		time.sleep(0.5)
-		move.motorStop()
-	else:
-		servo.turnMiddle()
-		move.move(speed,'forward')
-		time.sleep(0.5)
-		move.motorStop()
-
-
-class Servo_ctrl(threading.Thread):
-	def __init__(self, *args, **kwargs):
-		super(Servo_ctrl, self).__init__(*args, **kwargs)
-		self.__flag = threading.Event()
-		self.__flag.set()
-		self.__running = threading.Event()
-		self.__running.set()
-
-	def run(self):
-		global goal_pos, servo_command, init_get, functionMode
-		while self.__running.isSet():
-			self.__flag.wait()
-			if functionMode != 6:
-				if servo_command == 'lookleft':
-					servo.lookleft(servo_speed)
-				elif servo_command == 'lookright':
-					servo.lookright(servo_speed)
-				elif servo_command == 'up':
-					servo.up(servo_speed)
-				elif servo_command == 'down':
-					servo.down(servo_speed)
-				else:
-					pass
-
-			if functionMode == 4:
-				servo.ahead()
-				findline.run()
-				if not functionMode:
-					move.motorStop()
-			elif functionMode == 5:
-				autoDect(50)
-				if not functionMode:
-					move.motorStop()
-			elif functionMode == 6:
-				if MPU_connection:
-					accelerometer_data = sensor.get_accel_data()
-					X_get = accelerometer_data['x']
-					if not init_get:
-						goal_pos = X_get
-						init_get = 1
-					if servo_command == 'up':
-						servo.up(servo_speed)
-						time.sleep(0.2)
-						accelerometer_data = sensor.get_accel_data()
-						X_get = accelerometer_data['x']
-						goal_pos = X_get
-					elif servo_command == 'down':
-						servo.down(servo_speed)
-						time.sleep(0.2)
-						accelerometer_data = sensor.get_accel_data()
-						X_get = accelerometer_data['x']
-						goal_pos = X_get
-					if abs(X_get-goal_pos)>tor_pos:
-						if X_get > goal_pos:
-							servo.down(int(mpu_speed*abs(X_get - goal_pos)))
-						elif X_get < goal_pos:
-							servo.up(int(mpu_speed*abs(X_get - goal_pos)))
-						time.sleep(0.03)
-						continue
-				else:
-					functionMode = 0
-					try:
-						self.pause()
-					except:
-						pass
-
-			time.sleep(0.03)
-
-	def pause(self):
-		self.__flag.clear()
-
-	def resume(self):
-		self.__flag.set()
-
-	def stop(self):
-		self.__flag.set()
-		self.__running.clear()
-
-
-class SR_ctrl(threading.Thread):
-	def __init__(self, *args, **kwargs):
-		super(SR_ctrl, self).__init__(*args, **kwargs)
-		self.__flag = threading.Event()
-		self.__flag.set()
-		self.__running = threading.Event()
-		self.__running.set()
-
-	def run(self):
-		global goal_pos, servo_command, init_get, functionMode
-		while self.__running.isSet():
-			self.__flag.wait()
-			if SR_mode:
-				voice_command = SR.run()
-				if voice_command == 'forward':
-					turn.turnMiddle()
-					move.move(speed_set, 'forward')
-					time.sleep(1)
-					move.motorStop()
-
-				elif voice_command == 'backward':
-					turn.turnMiddle()
-					move.move(speed_set, 'backward')
-					time.sleep(1)
-					move.motorStop()
-
-				elif voice_command == 'left':
-					servo.turnLeft()
-					move.move(speed_set, 'forward')
-					time.sleep(1)
-					turn.turnMiddle()
-					move.motorStop()
-
-				elif voice_command == 'right':
-					servo.turnRight()
-					move.move(speed_set, 'forward')
-					time.sleep(1)
-					turn.turnMiddle()
-					move.motorStop()
-
-				elif voice_command == 'stop':
-					turn.turnMiddle()
-					move.motorStop()
-			else:
-				self.pause()
-
-	def pause(self):
-		self.__flag.clear()
-
-	def resume(self):
-		self.__flag.set()
-
-	def stop(self):
-		self.__flag.set()
-		self.__running.clear()
-
-
-def info_send_client():
-	SERVER_IP = addr[0]
-	SERVER_PORT = 2256   #Define port serial 
-	SERVER_ADDR = (SERVER_IP, SERVER_PORT)
-	Info_Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #Set connection value for socket
-	Info_Socket.connect(SERVER_ADDR)
-	print(SERVER_ADDR)
-	while 1:
-		try:
-			Info_Socket.send((info.get_cpu_tempfunc()+' '+info.get_cpu_use()+' '+info.get_ram_info()+' '+str(servo.get_direction())).encode())
-			time.sleep(1)
-		except:
-			time.sleep(10)
-			pass
-
-
-def FPV_thread():
-	global fpv
-	fpv=FPV.FPV()
-	fpv.capture_thread(addr[0])
-
-
-def  ap_thread():
-	os.system("sudo create_ap wlan0 eth0 Groovy 12345678")
-
-
-def run():
-	global servo_move, speed_set, servo_command, functionMode, init_get, R_set, G_set, B_set, SR_mode
-	servo.servo_init()
-	move.setup()
-	findline.setup()
-	direction_command = 'no'
-	turn_command = 'no'
-	servo_command = 'no'
-	speed_set = 100
-	rad = 0.5
-
-	info_threading=threading.Thread(target=info_send_client)	#Define a thread for FPV and OpenCV
-	info_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-	info_threading.start()									 #Thread starts
-
-
-	servo_move = Servo_ctrl()
-	servo_move.start()
-	servo_move.pause()
-	findline.setup()
-	while True: 
-		data = ''
-		data = str(tcpCliSock.recv(BUFSIZ).decode())
-		if not data:
-			continue
-
-		elif 'forward' == data:
-			direction_command = 'forward'
-			move.move(speed_set, direction_command)
-		
-		elif 'backward' == data:
-			direction_command = 'backward'
-			move.move(speed_set, direction_command)
-
-		elif 'DS' in data:
-			direction_command = 'no'
-			move.move(speed_set, direction_command)
-
-		elif 'left' == data:
-			# turn_command = 'left'
-			servo.turnLeft()
-
-		elif 'right' == data:
-			# turn_command = 'right'
-			servo.turnRight()
-
-		elif 'TS' in data:
-			# turn_command = 'no'
-			servo.turnMiddle()
-
-
-		elif 'Switch_1_on' in data:
-			switch.switch(1,1)
-			tcpCliSock.send(('Switch_1_on').encode())
-
-		elif 'Switch_1_off' in data:
-			switch.switch(1,0)
-			tcpCliSock.send(('Switch_1_off').encode())
-
-		elif 'Switch_2_on' in data:
-			switch.switch(2,1)
-			tcpCliSock.send(('Switch_2_on').encode())
-
-		elif 'Switch_2_off' in data:
-			switch.switch(2,0)
-			tcpCliSock.send(('Switch_2_off').encode())
-
-		elif 'Switch_3_on' in data:
-			switch.switch(3,1)
-			tcpCliSock.send(('Switch_3_on').encode())
-
-		elif 'Switch_3_off' in data:
-			switch.switch(3,0)
-			tcpCliSock.send(('Switch_3_off').encode())
-
-
-		elif 'function_1_on' in data:
-			servo.ahead()
-			time.sleep(0.2)
-			tcpCliSock.send(('function_1_on').encode())
-			radar_send = servo.radar_scan()
-			tcpCliSock.sendall(radar_send.encode())
-			print(radar_send)
-			time.sleep(0.3)
-			tcpCliSock.send(('function_1_off').encode())
-
-
-		elif 'function_2_on' in data:
-			functionMode = 2
-			fpv.FindColor(1)
-			tcpCliSock.send(('function_2_on').encode())
-
-		elif 'function_3_on' in data:
-			functionMode = 3
-			fpv.WatchDog(1)
-			tcpCliSock.send(('function_3_on').encode())
-
-		elif 'function_4_on' in data:
-			functionMode = 4
-			servo_move.resume()
-			tcpCliSock.send(('function_4_on').encode())
-
-		elif 'function_5_on' in data:
-			functionMode = 5
-			servo_move.resume()
-			tcpCliSock.send(('function_5_on').encode())
-
-		elif 'function_6_on' in data:
-			if MPU_connection:
-				functionMode = 6
-				servo_move.resume()
-				tcpCliSock.send(('function_6_on').encode())
-
-
-		#elif 'function_1_off' in data:
-		#	tcpCliSock.send(('function_1_off').encode())
-
-		elif 'function_2_off' in data:
-			functionMode = 0
-			fpv.FindColor(0)
-			switch.switch(1,0)
-			switch.switch(2,0)
-			switch.switch(3,0)
-			tcpCliSock.send(('function_2_off').encode())
-
-		elif 'function_3_off' in data:
-			functionMode = 0
-			fpv.WatchDog(0)
-			tcpCliSock.send(('function_3_off').encode())
-
-		elif 'function_4_off' in data:
-			functionMode = 0
-			servo_move.pause()
-			move.motorStop()
-			tcpCliSock.send(('function_4_off').encode())
-
-		elif 'function_5_off' in data:
-			functionMode = 0
-			servo_move.pause()
-			move.motorStop()
-			tcpCliSock.send(('function_5_off').encode())
-
-		elif 'function_6_off' in data:
-			functionMode = 0
-			servo_move.pause()
-			move.motorStop()
-			init_get = 0
-			tcpCliSock.send(('function_6_off').encode())
-
-
-		elif 'lookleft' == data:
-			servo_command = 'lookleft'
-			servo_move.resume()
-
-		elif 'lookright' == data:
-			servo_command = 'lookright'
-			servo_move.resume()
-
-		elif 'up' == data:
-			servo_command = 'up'
-			servo_move.resume()
-
-		elif 'down' == data:
-			servo_command = 'down'
-			servo_move.resume()
-
-		elif 'stop' == data:
-			if not functionMode:
-				servo_move.pause()
-			servo_command = 'no'
-			pass
-
-		elif 'home' == data:
-			servo.ahead()
-
-		elif 'CVrun' == data:
-			if not FPV.CVrun:
-				FPV.CVrun = 1
-				tcpCliSock.send(('CVrun_on').encode())
-			else:
-				FPV.CVrun = 0
-				tcpCliSock.send(('CVrun_off').encode())
-
-		elif 'wsR' in data:
-			try:
-				set_R=data.split()
-				R_set = int(set_R[1])
-				led.colorWipe(R_set, G_set, B_set)
-			except:
-				pass
-
-		elif 'wsG' in data:
-			try:
-				set_G=data.split()
-				G_set = int(set_G[1])
-				led.colorWipe(R_set, G_set, B_set)
-			except:
-				pass
-
-		elif 'wsB' in data:
-			try:
-				set_B=data.split()
-				B_set = int(set_B[1])
-				led.colorWipe(R_set, G_set, B_set)
-			except:
-				pass
-
-		elif 'pwm0' in data:
-			try:
-				set_pwm0=data.split()
-				pwm0_set = int(set_pwm0[1])
-				servo.setPWM(0, pwm0_set)
-			except:
-				pass
-
-		elif 'pwm1' in data:
-			try:
-				set_pwm1=data.split()
-				pwm1_set = int(set_pwm1[1])
-				servo.setPWM(1, pwm1_set)
-			except:
-				pass
-
-		elif 'pwm2' in data:
-			try:
-				set_pwm2=data.split()
-				pwm2_set = int(set_pwm2[1])
-				servo.setPWM(2, pwm2_set)
-			except:
-				pass
-
-		elif 'Speed' in data:
-			try:
-				set_speed=data.split()
-				speed_set = int(set_speed[1])
-			except:
-				pass
-
-		elif 'Save' in data:
-			try:
-				servo.saveConfig()
-			except:
-				pass
-
-		elif 'CVFL' in data:
-			if not FPV.FindLineMode:
-				FPV.FindLineMode = 1
-				tcpCliSock.send(('CVFL_on').encode())
-			else:
-				move.motorStop()
-				FPV.FindLineMode = 0
-				tcpCliSock.send(('CVFL_off').encode())
-
-		elif 'Render' in data:
-			if FPV.frameRender:
-				FPV.frameRender = 0
-			else:
-				FPV.frameRender = 1
-
-		elif 'WBswitch' in data:
-			if FPV.lineColorSet == 255:
-				FPV.lineColorSet = 0
-			else:
-				FPV.lineColorSet = 255
-
-		elif 'lip1' in data:
-			try:
-				set_lip1=data.split()
-				lip1_set = int(set_lip1[1])
-				FPV.linePos_1 = lip1_set
-			except:
-				pass
-
-		elif 'lip2' in data:
-			try:
-				set_lip2=data.split()
-				lip2_set = int(set_lip2[1])
-				FPV.linePos_2 = lip2_set
-			except:
-				pass
-
-		elif 'err' in data:
-			try:
-				set_err=data.split()
-				err_set = int(set_err[1])
-				FPV.findLineError = err_set
-			except:
-				pass
-
-		elif 'FCSET' in data:
-				FCSET = data.split()
-				fpv.colorFindSet(int(FCSET[1]), int(FCSET[2]), int(FCSET[3]))
-
-		elif 'setEC' in data:#Z
-			ECset = data.split()
-			try:
-				fpv.setExpCom(int(ECset[1]))
-			except:
-				pass
-
-		elif 'defEC' in data:#Z
-			fpv.defaultExpCom()
-
-		elif 'police' in data:
-			if LED.ledfunc != 'police':
-				tcpCliSock.send(('rainbow_off').encode())
-				LED.ledfunc = 'police'
-				ledthread.resume()
-				tcpCliSock.send(('police_on').encode())
-			elif LED.ledfunc == 'police':
-				LED.ledfunc = ''
-				ledthread.pause()
-				tcpCliSock.send(('police_off').encode())
-
-		elif 'rainbow' in data:
-			if LED.ledfunc != 'rainbow':
-				tcpCliSock.send(('police_off').encode())
-				LED.ledfunc = 'rainbow'
-				ledthread.resume()
-				tcpCliSock.send(('rainbow_on').encode())
-			elif LED.ledfunc == 'rainbow':
-				LED.ledfunc = ''
-				ledthread.pause()
-				tcpCliSock.send(('rainbow_off').encode())
-
-		elif 'sr' in data:
-			if not SR_mode:
-				if SR_dect:
-					SR_mode = 1
-					tcpCliSock.send(('sr_on').encode())
-					sr.resume()
-
-			elif SR_mode:
-				SR_mode = 0
-				sr.pause()
-				move.motorStop()
-				tcpCliSock.send(('sr_off').encode())
-
-		else:
-			pass
-
-		print(data)
-
-
-def wifi_check():
-	try:
-		s =socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-		s.connect(("1.1.1.1",80))
-		ipaddr_check=s.getsockname()[0]
-		s.close()
-		print(ipaddr_check)
-	except:
-		ap_threading=threading.Thread(target=ap_thread)   #Define a thread for data receiving
-		ap_threading.setDaemon(True)						  #'True' means it is a front thread,it would close when the mainloop() closes
-		ap_threading.start()								  #Thread starts
-
-		led.colorWipe(0,16,50)
-		time.sleep(1)
-		led.colorWipe(0,16,100)
-		time.sleep(1)
-		led.colorWipe(0,16,150)
-		time.sleep(1)
-		led.colorWipe(0,16,200)
-		time.sleep(1)
-		led.colorWipe(0,16,255)
-		time.sleep(1)
-		led.colorWipe(35,255,35)
-
-
+import subprocess
+
+#time.sleep(4)
+
+pwm = Adafruit_PCA9685.PCA9685()    #Ultrasonic Control
+
+dis_dir = []
+distance_stay  = 0.4
+distance_range = 2
+led_status = 0
+
+left_R = 22
+left_G = 23
+left_B = 24
+
+right_R = 10
+right_G = 9
+right_B = 25
+
+spd_ad     = 1          #Speed Adjustment
+pwm0       = 0          #Camera direction 
+pwm1       = 1          #Ultrasonic direction
+status     = 1          #Motor rotation
+forward    = 1          #Motor forward
+backward   = 0          #Motor backward
+
+left_spd   = 100         #Speed of the car
+right_spd  = 100         #Speed of the car
+left       = 100         #Motor Left
+right      = 100         #Motor Right
+
+spd_ad_1 = 1
+spd_ad_2 = 1
+spd_ad_u = 1
+
+#Status of the car
+auto_status   = 0
+ap_status     = 0
+turn_status   = 0
+
+opencv_mode   = 0
+findline_mode = 0
+speech_mode   = 0
+auto_mode     = 0
+
+data = ''
+
+dis_data = 0
+dis_scan = 1
+
+def replace_num(initial,new_num):   #Call this function to replace data in '.txt' file
+    newline=""
+    str_num=str(new_num)
+    with open("//etc/set.txt","r") as f:
+        for line in f.readlines():
+            if(line.find(initial) == 0):
+                line = initial+"%s" %(str_num+"\n")
+            newline += line
+    with open("set.txt","w") as f:
+        f.writelines(newline)
+
+def num_import_int(initial):        #Call this function to import data from '.txt' file
+    with open("//etc/set.txt") as f:
+        for line in f.readlines():
+            if(line.find(initial) == 0):
+                r=line
+    begin=len(list(initial))
+    snum=r[begin:]
+    n=int(snum)
+    return n
+
+vtr_mid    = num_import_int('E_C1:')
+hoz_mid    = num_import_int('E_C2:')
+look_up_max    = num_import_int('look_up_max:')
+look_down_max  = num_import_int('look_down_max:')
+look_right_max = num_import_int('look_right_max:')
+look_left_max  = num_import_int('look_left_max:')
+turn_speed     = num_import_int('look_turn_speed:')
+
+vtr_mid_orig = vtr_mid
+hoz_mid_orig = hoz_mid
+ip_con     = ''
+
+def get_ram():
+    try:
+        s = subprocess.check_output(['free','-m'])
+        lines = s.split('\n') 
+        return ( int(lines[1].split()[1]), int(lines[2].split()[3]) )
+    except:
+        return 0
+
+def get_temperature():
+    try:
+        s = subprocess.check_output(['/opt/vc/bin/vcgencmd','measure_temp'])
+        return float(s.split('=')[1][:-3])
+    except:
+        return 0
+
+def get_cpu_speed():
+    f = os.popen('/opt/vc/bin/vcgencmd get_config arm_freq')
+    cpu = f.read()
+    return cpu
+
+
+
+def wheel(pos):
+    """Generate rainbow colors across 0-255 positions."""
+    if pos < 85:
+        return Color(pos * 3, 255 - pos * 3, 0)
+    elif pos < 170:
+        pos -= 85
+        return Color(255 - pos * 3, 0, pos * 3)
+    else:
+        pos -= 170
+        return Color(0, pos * 3, 255 - pos * 3)
+
+def rainbowCycle(strip, wait_ms=20, iterations=5):
+    """Draw rainbow that uniformly distributes itself across all pixels."""
+    for j in range(256*iterations):
+        if 'forward' in data:
+            for i in range(strip.numPixels()):
+                if 'forward' in data:
+                    strip.setPixelColor(i, wheel((int(i * 256 / strip.numPixels()) + j) & 255))
+            strip.show()
+            time.sleep(wait_ms/1000.0)
+
+def theaterChaseRainbow(strip, wait_ms=50):
+    """Rainbow movie theater light style chaser animation."""
+    for j in range(256):
+        for q in range(3):
+            for i in range(0, strip.numPixels(), 3):
+                strip.setPixelColor(i+q, wheel((i+j) % 255))
+            strip.show()
+            time.sleep(wait_ms/1000.0)
+            for i in range(0, strip.numPixels(), 3):
+                strip.setPixelColor(i+q, 0)
+
+def colorWipe(strip, color):
+    """Wipe color across display a pixel at a time."""
+    for i in range(strip.numPixels()):
+        strip.setPixelColor(i, color)
+        strip.show()
+        time.sleep(0.005)
+
+def scan():                  #Ultrasonic Scanning
+    global dis_dir
+    dis_dir = []
+    turn.ultra_turn(hoz_mid)   #Ultrasonic point forward
+    turn.ultra_turn(look_left_max)   #Ultrasonic point Left,prepare to scan
+    dis_dir=['list']         #Make a mark so that the client would know it is a list
+    time.sleep(0.5)          #Wait for the Ultrasonic to be in position
+    cat_2=look_left_max                #Value of left-position
+    GPIO.setwarnings(False)  #Or it may print warnings
+    while cat_2>look_right_max:         #Scan,from left to right
+        turn.ultra_turn(cat_2)
+        cat_2 -= 3           #This value determine the speed of scanning,the greater the faster
+        new_scan_data=round(ultra.checkdist(),2)   #Get a distance of a certern direction
+        dis_dir.append(str(new_scan_data))              #Put that distance value into a list,and save it as String-Type for future transmission 
+    turn.ultra_turn(hoz_mid)   #Ultrasonic point forward
+    return dis_dir
+
+def scan_rev():                  #Ultrasonic Scanning
+    global dis_dir
+    dis_dir = []
+    turn.ultra_turn(hoz_mid)   #Ultrasonic point forward
+    turn.ultra_turn(look_right_max)   #Ultrasonic point Left,prepare to scan
+    dis_dir=['list']         #Make a mark so that the client would know it is a list
+    time.sleep(0.5)          #Wait for the Ultrasonic to be in position
+    cat_2=look_right_max                #Value of left-position
+    GPIO.setwarnings(False)  #Or it may print warnings
+    while cat_2<look_left_max:         #Scan,from left to right
+        turn.ultra_turn(cat_2)
+        cat_2 += 3           #This value determine the speed of scanning,the greater the faster
+        new_scan_data=round(ultra.checkdist(),2)   #Get a distance of a certern direction
+        dis_dir.append(str(new_scan_data))              #Put that distance value into a list,and save it as String-Type for future transmission 
+    turn.ultra_turn(hoz_mid)   #Ultrasonic point forward
+    return dis_dir
+
+def ultra_turn(hoz_mid):     #Control the direction of ultrasonic
+    pwm.set_pwm(1, 0, hoz_mid)
+
+def camera_turn(vtr_mid):    #Control the direction of Camera
+    pwm.set_pwm(0, 0, vtr_mid)
+
+def turn_left_led():         #Turn on the LED on the left
+    led.turn_left(4)
+
+def turn_right_led():        #Turn on the LED on the right
+    led.turn_right(4)
+
+def setup():                 #initialization
+    motor.setup()            
+    turn.ahead()
+    findline.setup()
+
+def destroy():               #Clean up
+    GPIO.cleanup()
+    connection.close()
+    client_socket.close()
+
+def opencv_thread():         #OpenCV and FPV video
+    global hoz_mid_orig,vtr_mid_orig
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
+        image = frame.array
+        cv2.line(image,(300,240),(340,240),(128,255,128),1)
+        cv2.line(image,(320,220),(320,260),(128,255,128),1)
+
+
+        if opencv_mode == 1:
+            hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, colorLower, colorUpper)
+            mask = cv2.erode(mask, None, iterations=2)
+            mask = cv2.dilate(mask, None, iterations=2)
+            cnts = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE)[-2]
+            center = None
+            if len(cnts) > 0:
+                led.both_off()
+                led.green()
+                cv2.putText(image,'Target Detected',(40,60), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+                c = max(cnts, key=cv2.contourArea)
+                ((x, y), radius) = cv2.minEnclosingCircle(c)
+                M = cv2.moments(c)
+                center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+                X = int(x)
+                Y = int(y)
+                if radius > 10:
+                    cv2.rectangle(image,(int(x-radius),int(y+radius)),(int(x+radius),int(y-radius)),(255,255,255),1)
+                    if X < 310:
+                        mu1 = int((320-X)/3)
+                        hoz_mid_orig+=mu1
+                        if hoz_mid_orig < look_left_max:
+                            pass
+                        else:
+                            hoz_mid_orig = look_left_max
+                        ultra_turn(hoz_mid_orig)
+                        #print('x=%d'%X)
+                    elif X >330:
+                        mu1 = int((X-330)/3)
+                        hoz_mid_orig-=mu1
+                        if hoz_mid_orig > look_right_max:
+                            pass
+                        else:
+                            hoz_mid_orig = look_right_max
+                        ultra_turn(hoz_mid_orig)
+                        #print('x=%d'%X)
+                    else:
+                        turn.middle()
+                        pass
+
+                    mu_t = 390-(hoz_mid-hoz_mid_orig)
+                    v_mu_t = 390+(hoz_mid+hoz_mid_orig)
+                    turn.turn_ang(mu_t)
+
+                    dis = dis_data
+                    if dis < (distance_stay-0.1) :
+                        led.both_off()
+                        led.red()
+                        turn.turn_ang(mu_t)
+                        motor.motor_left(status, backward,left_spd*spd_ad_u)
+                        motor.motor_right(status,forward,right_spd*spd_ad_u)
+                        cv2.putText(image,'Too Close',(40,80), font, 0.5,(128,128,255),1,cv2.LINE_AA)
+                    elif dis > (distance_stay+0.1):
+                        motor.motor_left(status, forward,left_spd*spd_ad_2)
+                        motor.motor_right(status,backward,right_spd*spd_ad_2)
+                        cv2.putText(image,'OpenCV Tracking',(40,80), font, 0.5,(128,255,128),1,cv2.LINE_AA)
+                    else:
+                        motor.motorStop()
+                        led.both_off()
+                        led.blue()  
+                        cv2.putText(image,'In Position',(40,80), font, 0.5,(255,128,128),1,cv2.LINE_AA)
+
+                    if dis < 8:
+                        cv2.putText(image,'%s m'%str(round(dis,2)),(40,40), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+
+                    if Y < 230:
+                        mu2 = int((240-Y)/5)
+                        vtr_mid_orig += mu2
+                        if vtr_mid_orig < look_up_max:
+                            pass
+                        else:
+                            vtr_mid_orig=look_up_max
+                        camera_turn(vtr_mid_orig)
+                    elif Y > 250:
+                        mu2 = int((Y-240)/5)
+                        vtr_mid_orig -= mu2
+                        if vtr_mid_orig > look_down_max:
+                            pass
+                        else:
+                            vtr_mid_orig=look_down_max
+                        camera_turn(vtr_mid_orig)
+                    
+                    if X>280:
+                        if X<350:
+                            #print('looked')
+                            cv2.line(image,(300,240),(340,240),(64,64,255),1)
+                            cv2.line(image,(320,220),(320,260),(64,64,255),1)
+                            cv2.rectangle(image,(int(x-radius),int(y+radius)),
+                                (int(x+radius),int(y-radius)),(64,64,255),1)
+            else:
+                led.both_off()
+                led.yellow()
+                cv2.putText(image,'Target Detecting',(40,60), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+                led_y=1
+                motor.motorStop()
+
+            for i in range(1, len(pts)):
+                if pts[i - 1] is None or pts[i] is None:
+                    continue
+                thickness = int(np.sqrt(args["buffer"] / float(i + 1)) * 2.5)
+                cv2.line(image, pts[i - 1], pts[i], (0, 0, 255), thickness)
+        else:
+            dis = dis_data
+            if dis < 8:
+                cv2.putText(image,'%s m'%str(round(dis,2)),(40,40), font, 0.5,(255,255,255),1,cv2.LINE_AA)
+
+
+        encoded, buffer = cv2.imencode('.jpg', image)
+        jpg_as_text = base64.b64encode(buffer)
+        footage_socket.send(jpg_as_text)
+        rawCapture.truncate(0)
+
+def ws2812_thread():         #WS_2812 leds
+    while 1:
+        if 'forward' in data:
+            rainbowCycle(strip)
+            time.sleep(0.1)
+        elif 'backward' in data:
+            colorWipe(strip, Color(255,0,0))
+            time.sleep(0.1)
+        if turn_status == 1:
+            strip.setPixelColor(0, Color(255,255,0))
+            strip.setPixelColor(1, Color(255,255,0))
+            strip.setPixelColor(2, Color(255,255,0))
+        elif turn_status == 2:
+            strip.setPixelColor(3, Color(255,255,0))
+            strip.setPixelColor(4, Color(255,255,0))
+            strip.setPixelColor(5, Color(255,255,0))
+        else:
+            pass
+        time.sleep(0.1)
+
+def findline_thread():       #Line tracking mode
+    while 1:
+        while findline_mode:
+            findline.run()
+        time.sleep(0.2)
+
+def speech_thread():         #Speech recognition mode
+    while 1:
+        while speech_mode:
+            speech.run()
+        time.sleep(0.2)
+
+def auto_thread():           #Ultrasonic tracking mode
+    while 1:
+        while auto_mode:
+            ultra.loop(distance_stay,distance_range)
+        time.sleep(0.2)
+
+def dis_scan_thread():       #Get Ultrasonic scan distance
+    global dis_data
+    while 1:
+        while  dis_scan:
+            dis_data = ultra.checkdist()
+            time.sleep(0.2)
+        time.sleep(0.2)
+
+def ap_thread():             #Set up an AP-Hotspot
+    os.system("sudo create_ap wlan0 eth0 AdeeptCar 12345678")
+
+wifi_status = 0
+
+def run():                   #Main loop
+    global hoz_mid,vtr_mid,ip_con,led_status,auto_status,opencv_mode,findline_mode,speech_mode,auto_mode,data,addr,footage_socket,ap_status,turn_status,wifi_status
+    led.setup()
+    while True:              #Connection
+        try:
+            s =socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+            s.connect(("1.1.1.1",80))
+            ipaddr_check=s.getsockname()[0]
+            s.close()
+            print(ipaddr_check)
+            wifi_status=1
+        except:
+            if ap_status == 0:
+                ap_threading=threading.Thread(target=ap_thread)   #Define a thread for data receiving
+                ap_threading.setDaemon(True)                          #'True' means it is a front thread,it would close when the mainloop() closes
+                ap_threading.start()                                  #Thread starts
+                led.both_off()
+                led.yellow()
+                time.sleep(5)
+                wifi_status = 0
+            
+        if wifi_status == 1:
+            print('waiting for connection...')
+            led.red()
+            tcpCliSock, addr = tcpSerSock.accept()#Determine whether to connect
+            led.both_off()
+            led.green()
+            print('...connected from :', addr)
+            #time.sleep(1)
+            tcpCliSock.send(('SET %s'%vtr_mid+' %s'%hoz_mid+' %s'%left_spd+' %s'%right_spd+' %s'%look_up_max+' %s'%look_down_max).encode())
+            print('SET %s'%vtr_mid+' %s'%hoz_mid+' %s'%left_spd+' %s'%right_spd+' %s'%left+' %s'%right)
+            break
+        else:
+            led.both_off()
+            led.blue()
+            print('waiting for connection...')
+            tcpCliSock, addr = tcpSerSock.accept()#Determine whether to connect
+            led.both_off()
+            led.green()
+            print('...connected from :', addr)
+            #time.sleep(1)
+            tcpCliSock.send(('SET %s'%vtr_mid+' %s'%hoz_mid+' %s'%left_spd+' %s'%right_spd+' %s'%look_up_max+' %s'%look_down_max).encode())
+            print('SET %s'%vtr_mid+' %s'%hoz_mid+' %s'%left_spd+' %s'%right_spd+' %s'%left+' %s'%right)
+            ap_status = 1
+            break
+
+
+    #FPV initialization
+    context = zmq.Context()
+    footage_socket = context.socket(zmq.PUB)
+    footage_socket.connect('tcp://%s:5555'%addr[0])
+    print(addr[0])
+    #Threads start
+    video_threading=threading.Thread(target=opencv_thread)      #Define a thread for FPV and OpenCV
+    video_threading.setDaemon(True)                             #'True' means it is a front thread,it would close when the mainloop() closes
+    video_threading.start()                                     #Thread starts
+
+    ws2812_threading=threading.Thread(target=ws2812_thread)     #Define a thread for ws_2812 leds
+    ws2812_threading.setDaemon(True)                            #'True' means it is a front thread,it would close when the mainloop() closes
+    ws2812_threading.start()                                    #Thread starts
+
+    findline_threading=threading.Thread(target=findline_thread) #Define a thread for line tracking
+    findline_threading.setDaemon(True)                          #'True' means it is a front thread,it would close when the mainloop() closes
+    findline_threading.start()                                  #Thread starts
+
+    speech_threading=threading.Thread(target=speech_thread)     #Define a thread for speech recognition
+    speech_threading.setDaemon(True)                            #'True' means it is a front thread,it would close when the mainloop() closes
+    speech_threading.start()                                    #Thread starts
+
+    auto_threading=threading.Thread(target=auto_thread)         #Define a thread for ultrasonic tracking
+    auto_threading.setDaemon(True)                              #'True' means it is a front thread,it would close when the mainloop() closes
+    auto_threading.start()                                      #Thread starts
+
+    scan_threading=threading.Thread(target=dis_scan_thread)     #Define a thread for ultrasonic scan
+    scan_threading.setDaemon(True)                              #'True' means it is a front thread,it would close when the mainloop() closes
+    scan_threading.start()                                      #Thread starts
+
+
+    while True: 
+        data = ''
+        data = tcpCliSock.recv(BUFSIZ).decode()
+        if not data:
+            continue
+        elif 'exit' in data:
+            os.system("sudo shutdown -h now\n")
+
+        elif 'spdset' in data:
+            global spd_ad
+            spd_ad=float((str(data))[7:])      #Speed Adjustment
+
+        elif 'scan' in data:
+            dis_can=scan()                     #Start Scanning
+            str_list_1=dis_can                 #Divide the list to make it samller to send 
+            str_index=' '                      #Separate the values by space
+            str_send_1=str_index.join(str_list_1)+' '
+            tcpCliSock.sendall((str(str_send_1)).encode())   #Send Data
+            tcpCliSock.send('finished'.encode())        #Sending 'finished' tell the client to stop receiving the list of dis_can
+
+        elif 'scan_rev' in data:
+            dis_can=scan_rev()                     #Start Scanning
+            str_list_1=dis_can                 #Divide the list to make it samller to send 
+            str_index=' '                      #Separate the values by space
+            str_send_1=str_index.join(str_list_1)+' '
+            tcpCliSock.sendall((str(str_send_1)).encode())   #Send Data
+            tcpCliSock.send('finished'.encode())        #Sending 'finished' tell the client to stop receiving the list of dis_can
+
+        elif 'EC1set' in data:                 #Camera Adjustment
+            new_EC1=int((str(data))[7:])
+            turn.camera_turn(new_EC1)
+            replace_num('E_C1:',new_EC1)
+
+        elif 'EC2set' in data:                 #Ultrasonic Adjustment
+            new_EC2=int((str(data))[7:])
+            replace_num('E_C2:',new_EC2)
+            turn.ultra_turn(new_EC2)
+
+        elif 'EM1set' in data:                 #Motor A Speed Adjustment
+            new_EM1=int((str(data))[7:])
+            replace_num('E_M1:',new_EM1)
+
+        elif 'EM2set' in data:                 #Motor B Speed Adjustment
+            new_EM2=int((str(data))[7:])
+            replace_num('E_M2:',new_EM2)
+
+        elif 'LUMset' in data:                 #Motor A Turningf Speed Adjustment
+            new_ET1=int((str(data))[7:])
+            replace_num('look_up_max:',new_ET1)
+            turn.camera_turn(new_ET1)
+
+        elif 'LDMset' in data:                 #Motor B Turningf Speed Adjustment
+            new_ET2=int((str(data))[7:])
+            replace_num('look_down_max:',new_ET2)
+            turn.camera_turn(new_ET2)
+
+        elif 'stop' in data:                   #When server receive "stop" from client,car stops moving
+            tcpCliSock.send('9'.encode())
+            setup()
+            motor.motorStop()
+            setup()
+            if led_status == 0:
+                led.setup()
+                led.both_off()
+            colorWipe(strip, Color(0,0,0))
+            continue
+        
+        elif 'lightsON' in data:               #Turn on the LEDs
+            led.both_on()
+            led_status=1
+            tcpCliSock.send('lightsON'.encode())
+
+        elif 'lightsOFF'in data:               #Turn off the LEDs
+            led.both_off()
+            led_status=0
+            tcpCliSock.send('lightsOFF'.encode())
+
+        elif 'middle' in data:                 #Go straight
+            if led_status == 0:
+                led.side_color_off(left_R,left_G)
+                led.side_color_off(right_R,right_G)
+            else:
+                led.side_on(left_B)
+                led.side_on(right_B)
+            turn_status = 0
+            turn.middle()
+        
+        elif 'Left' in data:                   #Turn left
+            if led_status == 0:
+                led.side_color_on(left_R,left_G)
+            else:
+                led.side_off(left_B)
+            turn.left()
+            turn_status=1
+            tcpCliSock.send('3'.encode())
+        
+        elif 'Right' in data:                  #Turn right
+            if led_status == 0:
+                led.side_color_on(right_R,right_G)
+            else:
+                led.side_off(right_B)
+            turn.right()
+            turn_status=2
+            tcpCliSock.send('4'.encode())
+        
+        elif 'backward' in data:               #When server receive "backward" from client,car moves backward
+            tcpCliSock.send('2'.encode())
+            motor.motor_left(status, backward, left_spd*spd_ad)
+            motor.motor_right(status, forward, right_spd*spd_ad)
+            colorWipe(strip, Color(255,0,0))
+
+        elif 'forward' in data:                #When server receive "forward" from client,car moves forward
+            tcpCliSock.send('1'.encode())
+            motor.motor_left(status, forward,left_spd*spd_ad)
+            motor.motor_right(status,backward,right_spd*spd_ad)
+            colorWipe(strip, Color(0,0,255))
+
+        elif 'l_up' in data:                   #Camera look up
+            if vtr_mid< look_up_max:
+                vtr_mid+=turn_speed
+            turn.camera_turn(vtr_mid)
+            tcpCliSock.send('5'.encode())
+
+        elif 'l_do' in data:                   #Camera look down
+            if vtr_mid> look_down_max:
+                vtr_mid-=turn_speed
+            turn.camera_turn(vtr_mid)
+            print(vtr_mid)
+            tcpCliSock.send('6'.encode())
+
+        elif 'l_le' in data:                   #Camera look left
+            if hoz_mid< look_left_max:
+                hoz_mid+=turn_speed
+            turn.ultra_turn(hoz_mid)
+            tcpCliSock.send('7'.encode())
+
+        elif 'l_ri' in data:                   #Camera look right
+            if hoz_mid> look_right_max:
+                hoz_mid-=turn_speed
+            turn.ultra_turn(hoz_mid)
+            tcpCliSock.send('8'.encode())
+
+        elif 'ahead' in data:                  #Camera look ahead
+            turn.ahead()
+
+        elif 'Stop' in data:                   #When server receive "Stop" from client,Auto Mode switches off
+            opencv_mode   = 0
+            findline_mode = 0
+            speech_mode   = 0
+            auto_mode     = 0
+            auto_status   = 0
+            dis_scan = 1
+            tcpCliSock.send('auto_status_off'.encode())
+            motor.motorStop()
+            led.both_off()
+            turn.middle()
+            time.sleep(0.1)
+            motor.motorStop()
+            led.both_off()
+            turn.middle()
+        
+        elif 'auto' in data:                   #When server receive "auto" from client,start Auto Mode
+            if auto_status == 0:
+                tcpCliSock.send('0'.encode())
+                auto_status = 1
+                auto_mode = 1
+                dis_scan = 0
+            else:
+                pass
+            continue
+
+        elif 'opencv' in data:                 #When server receive "auto" from client,start Auto Mode
+            if auto_status == 0:
+                auto_status = 1
+                opencv_mode = 1                  
+                tcpCliSock.send('oncvon'.encode())
+            continue
+
+        elif 'findline' in data:               #Find line mode start
+            if auto_status == 0:
+                tcpCliSock.send('findline'.encode())
+                auto_status = 1
+                findline_mode = 1
+            else:
+                pass
+            continue
+
+        elif 'voice_3' in data:                #Speech recognition mode start
+            if auto_status == 0:
+                auto_status = 1
+                speech_mode = 1
+                tcpCliSock.send('voice_3'.encode())
+            else:
+                pass
+            continue
 
 if __name__ == '__main__':
-	servo.servo_init()
-	switch.switchSetup()
-	switch.set_all_switch_off()
 
-	HOST = ''
-	PORT = 10223							  #Define port serial 
-	BUFSIZ = 1024							 #Define buffer size
-	ADDR = (HOST, PORT)
+    HOST = ''
+    PORT = 10223                              #Define port serial 
+    BUFSIZ = 1024                             #Define buffer size
+    ADDR = (HOST, PORT)
 
-	# try:
-	led  = LED.LED()
-	led.colorWipe(255,16,0)
-	ledthread = LED.LED_ctrl()
-	ledthread.start()
-	# except:
-	#	 print('Use "sudo pip3 install rpi_ws281x" to install WS_281x package')
-	#	 pass
+    tcpSerSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcpSerSock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+    tcpSerSock.bind(ADDR)
+    tcpSerSock.listen(5)                      #Start server,waiting for client
 
-	if SR_dect:
-		sr = SR_ctrl()
-		sr.start()
+    camera = picamera.PiCamera()              #Camera initialization
+    camera.resolution = (640, 480)
+    camera.framerate = 7
+    rawCapture = PiRGBArray(camera, size=(640, 480))
 
-	while  1:
-		wifi_check()
-		try:
-			tcpSerSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			tcpSerSock.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-			tcpSerSock.bind(ADDR)
-			tcpSerSock.listen(5)					  #Start server,waiting for client
-			print('waiting for connection...')
-			tcpCliSock, addr = tcpSerSock.accept()
-			print('...connected from :', addr)
+    colorLower = (24, 100, 100)               #The color that openCV find
+    colorUpper = (44, 255, 255)               #USE HSV value NOT RGB
 
-			# fpv=FPV.FPV()
-			# fps_threading=threading.Thread(target=FPV_thread)		 #Define a thread for FPV and OpenCV
-			# fps_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-			# fps_threading.start()									 #Thread starts
-			break
-		except:
-			led.colorWipe(0,0,0)
+    ap = argparse.ArgumentParser()            #OpenCV initialization
+    ap.add_argument("-b", "--buffer", type=int, default=64,
+        help="max buffer size")
+    args = vars(ap.parse_args())
+    pts = deque(maxlen=args["buffer"])
+    time.sleep(0.1)
 
-		try:
-			led.colorWipe(0,80,255)
-		except:
-			pass
-			fpv=FPV.FPV()
-	fps_threading=threading.Thread(target=FPV_thread)		 #Define a thread for FPV and OpenCV
-	fps_threading.setDaemon(True)							 #'True' means it is a front thread,it would close when the mainloop() closes
-	fps_threading.start()									 #Thread starts
-	run()
-	try:
-		run()
-	except:
-		servo_move.stop()
-		led.colorWipe(0,0,0)
-		servo.clean_all()
-		move.destroy()
+    # LED strip configuration:
+    LED_COUNT      = 12      # Number of LED pixels.
+    LED_PIN        = 12      # GPIO pin connected to the pixels (18 uses PWM!).
+    #LED_PIN        = 10      # GPIO pin connected to the pixels (10 uses SPI /dev/spidev0.0).
+    LED_FREQ_HZ    = 800000  # LED signal frequency in hertz (usually 800khz)
+    LED_DMA        = 10      # DMA channel to use for generating signal (try 10)
+    LED_BRIGHTNESS = 255     # Set to 0 for darkest and 255 for brightest
+    LED_INVERT     = False   # True to invert the signal (when using NPN transistor level shift)
+    LED_CHANNEL    = 0       # set to '1' for GPIOs 13, 19, 41, 45 or 53
+
+    # Process arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--clear', action='store_true', help='clear the display on exit')
+    args = parser.parse_args()
+
+    # Create NeoPixel object with appropriate configuration.
+    strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL)
+    # Intialize the library (must be called once before other functions).
+    strip.begin()
+    setup()
+    try:
+        run()
+    except KeyboardInterrupt:
+        if ap_status == 1:
+            os.system("sudo shutdown -h now\n")
+            time.sleep(5)
+            print('shutdown')
+        colorWipe(strip, Color(0,0,0))
+        camera=picamera.PiCamera()
+        camera.close()
+        destroy()
